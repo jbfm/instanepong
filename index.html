@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<meta charset="utf8">
+<style>
+	body {
+		background: #000;
+		margin:0;
+	}
+
+	.board {
+		background:#222;
+		width:820px;
+		height:620px;
+		margin:auto;
+		padding:10px;
+		border-radius:3px;
+		overflow: hidden;
+
+		position: relative;
+
+		/*-webkit-box-reflect: below 2px -webkit-linear-gradient(top, transparent 40%, rgba(255,255,255,0.3));*/
+	}
+
+	.glare {
+		position: absolute;
+		top:0;
+		left:0;
+		width:100%;
+		height:100%;
+		background-image:-webkit-radial-gradient(-50px -50px, ellipse farthest-corner, rgba(190,190,255,0.5) 0%, rgba(190, 190, 255, 0) 40%),
+		                 -webkit-radial-gradient(100% 100%, ellipse farthest-corner, rgba(190,190,255,0.25) 0%, rgba(190, 190, 255, 0) 40%);
+	}
+
+	.points {
+		position: absolute;
+		font-size:52px;
+		font-family:Arial;
+		font-weight:bold;
+		color:#fff;
+		top:0;
+		left:0;
+		width:100%;
+		-webkit-user-select:none;
+	}
+
+	.right {
+		position: absolute;
+		top:20px;
+		left:50%;
+		width:50px;
+		line-height:50px;
+		margin-left:15px;
+
+		-webkit-perspective:200px;
+		-webkit-transform-style: preserve-3d;
+		-webkit-transform-origin: center bottom;
+		-webkit-transform:rotateX(0deg);
+	}
+
+	.left {
+		position: absolute;
+		top:20px;
+		right:50%;
+		width:50px;
+		line-height:50px;
+		margin-right:15px;
+		text-align:right;
+
+		-webkit-perspective:200px;
+		-webkit-transform-style: preserve-3d;
+		-webkit-transform-origin: center bottom;
+		-webkit-transform:rotateX(0deg);
+	}
+
+	.points div {
+		-webkit-transition:all 200ms;
+	}
+
+	.points div.down {
+		-webkit-transform:rotateX(90deg);
+	}
+
+	canvas {
+		border:10px solid #fff;
+		border-radius:3px;
+		box-shadow:0 0 15px rgba(0,0,0,0.8);
+	}
+</style>
+<div class="board">
+	<canvas id="pong" width="800" height="600"></canvas>
+	<div class="points">
+		<div class="left">0</div>
+		<div class="right">0</div>
+	</div>
+	<div class="glare"></div>
+</div>
+<script>
+	var c = document.getElementById('pong').getContext("2d");
+	var side;
+	var ball = {};
+	var pads = {};
+	var game = {};
+
+	var ws = new WebSocket('ws://awkpair.local:1337');
+
+	var setUp = function() {
+		document.getElementById('pong').width = game.w;
+		document.getElementById('pong').height = game.h;
+		document.getElementById('pong').parentNode.style.width = (game.w + 20) + "px";
+		document.getElementById('pong').parentNode.style.height = (game.h + 20) + "px";
+		c.clearRect(0, 0, game.w, game.h);
+		c.fillStyle = '#111';
+		c.fillRect(0, 0, game.w, game.h);
+
+		c.beginPath();
+		c.strokeStyle = '#fff';
+		c.setLineDash([20, 15])
+		c.lineWidth = 10;
+		c.moveTo(game.w / 2, 0);
+		c.lineTo(game.w / 2, game.h);
+		c.stroke();
+	};
+
+	var parseMessage = function(e) {
+		var response = JSON.parse(e.data);
+
+		if(pads.left && (pads.left.points != response.pads.left.points)) {
+			document.querySelector('.left').className = 'left down';
+			setTimeout(function() {
+				document.querySelector('.left').innerHTML = response.pads.left.points;
+				document.querySelector('.left').className = 'left';
+			}, 200);
+		}
+
+		if(pads.right && (pads.right.points != response.pads.right.points)) {
+			document.querySelector('.right').className = 'right down';
+			setTimeout(function() {
+				document.querySelector('.right').innerHTML = response.pads.right.points;
+				document.querySelector('.right').className = 'right';
+			}, 200);
+		}
+
+		pads = response.pads;
+		side = response.side;
+		ball = response.ball;
+		game = response.court;
+		tick();
+	};
+
+	var isDown = false;
+	var isUp = false;
+
+	var sendAction = function(e) {
+		if(e.which == 38 && e.type == 'keydown') {
+			isUp = true;
+		}
+
+		if(e.which == 40 && e.type == 'keydown') {
+			isDown = true;
+		}
+
+		if(e.which == 38 && e.type == 'keyup') {
+			isUp = false;
+		}
+
+		if(e.which == 40 && e.type == 'keyup') {
+			isDown = false;
+		}
+
+		var data = {
+			up: isUp,
+			down: isDown,
+		};
+
+		ws.send(JSON.stringify(data));
+	};
+
+	var points = [];
+	var maxParticles = 1000;
+	var point, i, j;
+	var pointsPerTick = 20;
+
+	var mouseX = 50;
+	var mouseY = 50;
+
+	window.addEventListener("mousemove", function(e) {
+		mouseX = e.clientX;
+		mouseY = e.clientY;
+	});
+
+	function Particle(options) {
+		this.life = options.life || 1000;
+		this.maxLife = this.life;
+
+		this.maxVelocity = 5;
+
+		this.speed = 1;
+
+		this.vy = options.vy || Math.random() * (this.maxVelocity * 2) - this.maxVelocity;
+		this.vx = options.vx || Math.random() * (this.maxVelocity * 2) - this.maxVelocity;
+
+		this.force = 1;
+		this.acceleration = 1;
+
+		this.x = options.x || 0;
+		this.y = options.y || 0;
+
+		this.ox = this.x;
+		this.oy = this.y;
+
+		this.bounces = 0;
+
+		this.r = options.r || Math.ceil(Math.random() * 255);
+		this.g = options.g || Math.ceil(Math.random() * 255);
+		this.b = options.b || Math.ceil(Math.random() * 255);
+
+		this.size = options.size || 2;
+
+		this.accelerationRate = (this.vy > 0 ? this.maxVelocity - this.vy : this.maxVelocity + this.vy) / 10;
+	}
+
+	Particle.prototype.tick = function() {
+		this.life--;
+
+		if(this.vy <= 0) {
+			this.force -= 0.03;
+		}
+
+		if(this.force <= 0) {
+			this.acceleration = 2.5;
+		}
+
+		this.acceleration += this.accelerationRate;
+
+		this.x += this.vx;
+		this.y += (this.vy * this.force) * this.acceleration;
+
+		if(this.x < 0) {
+			this.vx = this.vx * -1;
+			this.x = 0;
+		}
+
+		if(this.x > c.width) {
+			this.vx = this.vx * -1;
+			this.x = c.width;
+		}
+
+		if(this.y - this.size < 0) {
+			this.vy = this.vy * -1;
+			this.y = 0;
+		}
+
+		if(this.y + this.size > c.height) {
+			this.vy = this.vy * -1;
+			this.y = c.height - this.size;
+			this.force = 1 - (0.1 * this.bounces);
+			if(this.force < 0) {
+				this.force = 0;
+			}
+			this.bounces++;
+		}
+	};
+
+	var tick = function() {
+		setUp();
+
+		c.fillStyle = '#fff';
+		c.beginPath();
+		c.lineWidth = 0;
+		c.arc(ball.x + (ball.w / 2), ball.y + (ball.h / 2), ball.w / 2, 0, Math.PI * 2, true);
+		c.closePath();
+		c.fill();
+
+		if(pads.left.active) {
+			c.fillRect(pads.left.x, pads.left.y, pads.left.w, pads.left.h);
+		}
+
+		if(pads.right.active) {
+			c.fillRect(pads.right.x, pads.right.y, pads.right.w, pads.right.h);
+		}
+
+		if(ball.sparks) {
+			for(i = points.length, j = 0; i < maxParticles && j < ball.sparks; i++, j++) {
+				points.push(new Particle({
+					x: ball.x + (ball.w / 2),
+					y: ball.y + (ball.h / 2),
+					size: Math.round(Math.random() * 10),
+					life: 50,
+					r: Math.ceil(Math.random() * 255),
+					g: Math.ceil(Math.random() * 255),
+					b: Math.ceil(Math.random() * 255)
+				}));
+			}
+		}
+
+		for(i = 0; i < points.length; i++) {
+			point = points[i];
+
+			point.tick();
+			if(point.life === 0) {
+				points.splice(i, i);
+			}
+
+			c.fillStyle = "rgba("+point.r+","+point.g+","+point.b+","+(point.life / point.maxLife)+")";
+
+			c.beginPath();
+			c.arc(point.x, point.y, point.size / 2, 0, Math.PI * 2, true);
+			c.closePath();
+			c.fill();
+		}
+	};
+
+	setUp();
+
+	ws.onopen = function(e) {
+		document.onkeydown = sendAction;
+		document.onkeyup = sendAction;
+
+		document.onmousemove = function(e) {
+			var canvasOffsetTop = 20;
+
+			if(e.y > canvasOffsetTop && e.y < (game.h + canvasOffsetTop)) {
+				ws.send(JSON.stringify({
+					y: e.y - canvasOffsetTop
+				}));
+				document.body.style.cursor = 'none';
+			} else {
+				document.body.style.cursor = 'normal';
+			}
+		};
+	};
+	ws.onmessage = parseMessage;
+</script>
